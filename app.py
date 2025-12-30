@@ -6,12 +6,11 @@ from datetime import datetime
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Macros App", page_icon="💪", layout="centered")
 
-# Objetivos fijados por el usuario
 OBJETIVOS = {
     "Grasas": 70.0,
     "Carbohidratos": 240.0,
     "Proteina": 160.0,
-    "Kcal": 2230.0 # (70*9 + 240*4 + 160*4)
+    "Kcal": 2230.0
 }
 
 # --- FUNCIONES DE PERSISTENCIA ---
@@ -26,19 +25,21 @@ def cargar_log():
     return pd.DataFrame(columns=["Fecha", "Momento", "Comida", "Grasas", "Carbohidratos", "Proteina", "Kcal"])
 
 # --- LÓGICA PRINCIPAL ---
-st.title("💪 Mi Diario de Macros")
 bbdd = cargar_bbdd()
+log_completo = cargar_log()
 fecha_hoy = datetime.now().strftime('%Y-%m-%d')
 
-# Creamos las pestañas para la navegación móvil
+st.title("💪 Mi Diario de Macros")
+
+# Pestañas de navegación
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Registrar", "📊 Hoy", "📜 Historial", "⚙️ BBDD"])
 
 # --- TAB 1: REGISTRAR CONSUMO ---
 with tab1:
-    st.subheader("¿Qué has comido?")
+    st.subheader("Registrar Alimento")
     momento = st.selectbox("Momento del día", ["Desayuno", "Comida", "Merienda", "Cena", "Otro"])
     
-    busqueda = st.text_input("🔍 Buscar alimento en BBDD...")
+    busqueda = st.text_input("🔍 Buscar alimento...")
     
     if busqueda:
         coincidencias = bbdd[bbdd['Comida'].str.contains(busqueda, case=False, na=False)]
@@ -47,12 +48,24 @@ with tab1:
             seleccion = st.selectbox("Selecciona el plato", coincidencias['Comida'].tolist())
             plato = coincidencias[coincidencias['Comida'] == seleccion].iloc[0]
             
-            unidad_texto = "gramos" if "100g" in str(plato['Porcion']) else "unidades"
-            cantidad = st.number_input(f"Cantidad en {unidad_texto}", min_value=0.1, value=100.0 if unidad_texto=="gramos" else 1.0)
+            # Identificar unidad según BBDD
+            p_base = str(plato['Porcion']).lower()
+            if "100g" in p_base:
+                u_medida = "gramos"
+                es_proporcional = True
+            elif "100ml" in p_base:
+                u_medida = "ml"
+                es_proporcional = True
+            else:
+                u_medida = "unidades"
+                es_proporcional = False
+
+            cantidad = st.number_input(f"Cantidad en {u_medida}", min_value=0.1, value=100.0 if es_proporcional else 1.0)
             
             if st.button("Añadir al Diario"):
-                factor = cantidad / 100.0 if "100g" in str(plato['Porcion']) else cantidad
-                nuevo_log = {
+                factor = cantidad / 100.0 if es_proporcional else cantidad
+                
+                nuevo_registro = {
                     "Fecha": fecha_hoy,
                     "Momento": momento,
                     "Comida": plato['Comida'],
@@ -62,89 +75,86 @@ with tab1:
                     "Kcal": round(plato['Calorias'] * factor, 2)
                 }
                 
-                # Guardar
-                log_actual = cargar_log()
-                log_actual = pd.concat([log_actual, pd.DataFrame([nuevo_log])], ignore_index=True)
-                log_actual.to_csv('log_diario.csv', index=False)
-                st.success(f"✅ {plato['Comida']} añadido a {momento}")
+                # Actualizar y guardar
+                log_final = pd.concat([log_completo, pd.DataFrame([nuevo_registro])], ignore_index=True)
+                log_final.to_csv('log_diario.csv', index=False)
+                st.success(f"✅ {plato['Comida']} guardado")
                 st.rerun()
         else:
-            st.warning("No se encontró el alimento. Añádelo en la pestaña BBDD.")
+            st.warning("Alimento no encontrado.")
 
-# --- TAB 2: RESUMEN DE HOY Y ELIMINAR ---
+# --- TAB 2: RESUMEN DE HOY Y BORRADO ---
 with tab2:
-    st.subheader(f"Resumen: {datetime.now().strftime('%d/%m/%Y')}")
-    log = cargar_log()
-    hoy_df = log[log['Fecha'] == fecha_hoy].reset_index() # Reset index para poder borrar correctamente
+    st.subheader(f"Estado: {datetime.now().strftime('%d/%m/%Y')}")
+    hoy_df = log_completo[log_completo['Fecha'] == fecha_hoy].copy()
     
     if not hoy_df.empty:
         totales = hoy_df[['Grasas', 'Carbohidratos', 'Proteina', 'Kcal']].sum()
         
-        # Métricas de colores
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Proteína", f"{totales['Proteina']:.1f}g", f"{totales['Proteina'] - OBJETIVOS['Proteina']:.1f}g")
-        c2.metric("Carbs", f"{totales['Carbohidratos']:.1f}g", f"{totales['Carbohidratos'] - OBJETIVOS['Carbohidratos']:.1f}g")
-        c3.metric("Grasas", f"{totales['Grasas']:.1f}g", f"{totales['Grasas'] - OBJETIVOS['Grasas']:.1f}g")
+        # Métricas visuales
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Prot", f"{totales['Proteina']:.1f}g", f"{totales['Proteina'] - OBJETIVOS['Proteina']:.1f}g")
+        m2.metric("Carbs", f"{totales['Carbohidratos']:.1f}g", f"{totales['Carbohidratos'] - OBJETIVOS['Carbohidratos']:.1f}g")
+        m3.metric("Grasas", f"{totales['Grasas']:.1f}g", f"{totales['Grasas'] - OBJETIVOS['Grasas']:.1f}g")
         
-        st.divider()
+        # Barra de calorías
         st.write(f"**Calorías:** {totales['Kcal']:.0f} / {OBJETIVOS['Kcal']:.0f} kcal")
         st.progress(min(totales['Kcal'] / OBJETIVOS['Kcal'], 1.0))
         
-        # Fila de Pendientes
-        pend_p = max(0, OBJETIVOS['Proteina'] - totales['Proteina'])
-        st.info(f"🚩 Falta para el objetivo: **{pend_p:.1f}g de Proteína**")
+        # Fila de pendientes
+        falta_p = max(0, OBJETIVOS['Proteina'] - totales['Proteina'])
+        st.info(f"🚩 Pendiente: **{falta_p:.1f}g de Proteína** para el objetivo.")
 
-        # Lista de comidas con opción de borrar
-        st.write("### Desglose y Edición")
+        st.divider()
+        st.write("### Registros de hoy")
+        # Mostrar cada fila con botón de eliminar
         for i, row in hoy_df.iterrows():
-            col_info, col_del = st.columns([4, 1])
-            col_info.write(f"**{row['Momento']}**: {row['Comida']} ({row['Kcal']:.0f} kcal)")
-            # Usamos el índice original del log para borrar
-            if col_del.button("🗑️", key=f"btn_{row['index']}"):
-                log_completo = cargar_log()
-                log_completo = log_completo.drop(row['index'])
+            c_txt, c_btn = st.columns([4, 1])
+            c_txt.write(f"**{row['Momento']}**: {row['Comida']} ({row['Kcal']:.0f} kcal)")
+            if c_btn.button("🗑️", key=f"del_{i}"):
+                log_completo = log_completo.drop(i)
                 log_completo.to_csv('log_diario.csv', index=False)
                 st.rerun()
     else:
-        st.info("Todavía no has registrado nada hoy.")
+        st.info("No hay registros para el día de hoy.")
 
 # --- TAB 3: HISTORIAL COMPLETO ---
 with tab3:
-    st.subheader("Historial de registros")
-    log_h = cargar_log()
-    if not log_h.empty:
-        st.dataframe(log_h.sort_values(by="Fecha", ascending=False), use_container_width=True)
-        if st.button("Limpiar todo el historial"):
-            if st.confirm("¿Seguro que quieres borrar TODO el historial?"):
+    st.subheader("Historial Total")
+    if not log_completo.empty:
+        st.dataframe(log_completo.sort_values(by="Fecha", ascending=False), use_container_width=True)
+        if st.button("Eliminar TODO el historial"):
+            if st.checkbox("Confirmar borrado total"):
                 os.remove('log_diario.csv')
                 st.rerun()
     else:
-        st.write("No hay datos guardados.")
+        st.write("Historial vacío.")
 
-# --- TAB 4: GESTIONAR BBDD ---
+# --- TAB 4: GESTIÓN DE BBDD ---
 with tab4:
-    st.subheader("Añadir nuevo alimento a BBDD")
-    with st.form("form_bbdd"):
-        n_nombre = st.text_input("Nombre del alimento")
-        col_a, col_b, col_c = st.columns(3)
-        n_g = col_a.number_input("Grasas", min_value=0.0, step=0.1)
-        n_c = col_b.number_input("Carbs", min_value=0.0, step=0.1)
-        n_p = col_c.number_input("Proteína", min_value=0.0, step=0.1)
-        n_uni = st.radio("Porción base", ["100g", "1U"], horizontal=True)
+    st.subheader("Añadir Alimento a BBDD")
+    with st.form("nuevo_alimento"):
+        nombre = st.text_input("Nombre")
+        c1, c2, c3 = st.columns(3)
+        g = c1.number_input("Grasas", min_value=0.0, format="%.2f")
+        c = c2.number_input("Carbs", min_value=0.0, format="%.2f")
+        p = c3.number_input("Proteína", min_value=0.0, format="%.2f")
+        porcion = st.radio("Porción base", ["100g", "100ml", "1 U"], horizontal=True)
         
-        if st.form_submit_button("Guardar Alimento"):
-            if n_nombre:
-                n_kcal = (n_g * 9) + (n_c * 4) + (n_p * 4)
-                nueva_comida = pd.DataFrame([{
-                    "Comida": n_nombre, "Grasas": n_g, "Carbohidratos": n_c,
-                    "Proteina": n_p, "Porcion": n_uni, "Calorias": n_kcal
+        if st.form_submit_button("Guardar en BBDD"):
+            if nombre:
+                cals = (g * 9) + (c * 4) + (p * 4)
+                nueva_fila = pd.DataFrame([{
+                    "Comida": nombre, "Grasas": g, "Carbohidratos": c,
+                    "Proteina": p, "Porcion": porcion, "Calorias": round(cals, 2)
                 }])
-                nueva_comida.to_csv('bbdd_final.csv', mode='a', index=False, header=not os.path.exists('bbdd_final.csv'))
-                st.success(f"✅ {n_nombre} guardado.")
+                bbdd_actualizada = pd.concat([bbdd, nueva_fila], ignore_index=True)
+                bbdd_actualizada.to_csv('bbdd_final.csv', index=False)
+                st.success(f"✅ {nombre} añadido a la base de datos.")
                 st.rerun()
             else:
-                st.error("Ponle un nombre al alimento.")
+                st.error("El nombre es obligatorio.")
 
     st.divider()
-    st.write("### Alimentos actuales")
+    st.write("### Base de Datos Actual")
     st.dataframe(bbdd, use_container_width=True)
