@@ -216,7 +216,7 @@ with tab5:
             except Exception as e:
                 st.error(f"Error al guardar las mediciones: {e}")
 
-                # --- TAB 6: BUSCAR FECHA ---
+# --- TAB 6: BUSCAR FECHA ---
 with tab6:
     st.subheader("Consultar días anteriores")
     
